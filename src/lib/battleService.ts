@@ -221,7 +221,8 @@ async function ensureUser(telegramId: number, username: string) {
 async function incrementWinLoss(telegramId: number, field: 'wins' | 'losses') {
   const { data } = await supabase.from('users').select(field).eq('telegram_id', telegramId).single();
   if (data) {
-    await supabase.from('users').update({ [field]: data[field] + 1 }).eq('telegram_id', telegramId);
+    const currentValue = (data as any)[field] || 0;
+    await supabase.from('users').update({ [field]: currentValue + 1 }).eq('telegram_id', telegramId);
   }
 }
 
