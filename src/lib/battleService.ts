@@ -252,7 +252,7 @@ async function updateBattleMessage(battle: any, p1LastAction: string, p2LastActi
       `🏆 <b>${resultText}</b>\n\n` +
       `<b>Final Stats:</b>\n${p1Stats}\n\n${p2Stats}`;
 
-    await editMessageText(battle.chat_id, battle.battle_message_id, text, null);
+    await editMessageText(battle.chat_id, battle.battle_message_id, text, { inline_keyboard: [] });
   } else {
     const text = `⚔️ <b>Round ${battle.round_number}</b>\n\n` +
       `<i>Last Round: @${battle.player1_username} used ${p1LastAction}, @${battle.player2_username} used ${p2LastAction}</i>\n\n` +
