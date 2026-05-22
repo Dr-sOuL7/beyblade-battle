@@ -32,7 +32,8 @@ export async function POST(req: Request) {
           }
         } catch (error: any) {
           console.error("Failed to create battle:", error);
-          await sendMessage(chatId, "Failed to start a battle. Make sure database is configured.");
+          const errorDetails = error.message || error.code || JSON.stringify(error);
+          await sendMessage(chatId, `Failed to start a battle. Error: ${errorDetails}`);
         }
       }
     } 
