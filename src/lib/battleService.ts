@@ -209,7 +209,7 @@ async function resolveBattleRound(battle: any) {
 }
 
 async function ensureUser(telegramId: number, username: string) {
-  const { data } = await supabase.from('users').select('id').eq('telegram_id', telegramId).single();
+  const { data, error } = await supabase.from('users').select('id').eq('telegram_id', telegramId).maybeSingle();
   if (!data) {
     await supabase.from('users').insert({
       telegram_id: telegramId,
