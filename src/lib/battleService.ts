@@ -224,7 +224,12 @@ async function resolveBattleRound(battle: any) {
 
   const result = resolveRound(p1, p2);
 
-  const isClimax = battle.round_number >= 5 || result.p1_hp <= 30 || result.p2_hp <= 30;
+  const newP1Hp = Math.max(0, p1.health - result.p1_hp_loss);
+  const newP2Hp = Math.max(0, p2.health - result.p2_hp_loss);
+  const newP1Spin = Math.max(0, p1.spin - result.p1_spin_loss);
+  const newP2Spin = Math.max(0, p2.spin - result.p2_spin_loss);
+
+  const isClimax = battle.round_number >= 5 || newP1Hp <= 30 || newP2Hp <= 30;
   let resultText = getRoundNarration(p1.username, p2.username, battle.p1_action, battle.p2_action, isClimax);
   let highlights = battle.highlights || [];
 
@@ -233,7 +238,7 @@ async function resolveBattleRound(battle: any) {
     if (!highlights.includes('perfect_clash')) highlights.push('perfect_clash');
   }
 
-  if (!result.winner && ((result.p1_hp > 0 && result.p1_hp <= 5) || (result.p2_hp > 0 && result.p2_hp <= 5) || (result.p1_spin > 0 && result.p1_spin <= 5) || (result.p2_spin > 0 && result.p2_spin <= 5))) {
+  if (!result.winner && ((newP1Hp > 0 && newP1Hp <= 5) || (newP2Hp > 0 && newP2Hp <= 5) || (newP1Spin > 0 && newP1Spin <= 5) || (newP2Spin > 0 && newP2Spin <= 5))) {
     resultText += `\n\n💫 <b>MIRACLE SURVIVAL!</b> Hanging on by a thread!`;
     if (!highlights.includes('miracle_survival')) highlights.push('miracle_survival');
   }
@@ -314,10 +319,10 @@ async function resolveBattleRound(battle: any) {
   
   const updatePayload: any = {
     status: result.winner ? 'finished' : 'active',
-    p1_hp: result.p1_hp,
-    p2_hp: result.p2_hp,
-    p1_spin: result.p1_spin,
-    p2_spin: result.p2_spin,
+    p1_hp: newP1Hp,
+    p2_hp: newP2Hp,
+    p1_spin: newP1Spin,
+    p2_spin: newP2Spin,
     p1_charge: result.p1_charge,
     p2_charge: result.p2_charge,
     round_number: battle.round_number + 1,
@@ -348,22 +353,11 @@ async function resolveBattleRound(battle: any) {
     return;
   }
 
-  // If battle finished, update user stats
-  if (result.winner && result.winner !== 'draw') {
-    const winnerId = result.winner === 'p1' ? battle.player1_id : battle.player2_id;
-    const loserId = result.winner === 'p1' ? battle.player2_id : battle.player1_id;
-    
-    // Call RPC or simple updates (simplified here)
-    // NOTE: In production, use an RPC to safely increment
-    await incrementWinLoss(winnerId, 'wins');
-    await incrementWinLoss(loserId, 'losses');
-  }
-
   // Update Telegram Message
   await updateBattleMessage(newBattle, battle.p1_action, battle.p2_action, resultText);
 }
 
-async function ensureUser(telegramId: number, username: string) {
+export async function ensureUser(telegramId: number, username: string) {
   const { data, error } = await supabase.from('users').select('*').eq('telegram_id', telegramId).maybeSingle();
   if (!data) {
     const { data: newUser } = await supabase.from('users').insert({
@@ -416,7 +410,7 @@ async function updateBattleMessage(battle: any, p1LastAction: string, p2LastActi
       `${p1Stats}\n\n${p2Stats}\n\n` +
       `👉 <b>Choose your next action!</b>`;
 
-    const keyboard = getBattleKeyboard(battle.id, battle.p1_charge >= 100, battle.p2_charge >= 100);
+    const keyboard = getBattleKeyboard(battle);
     await editMessageText(battle.chat_id, battle.battle_message_id, text, keyboard);
     if (battle.chat_id_2 && battle.battle_message_id_2) {
       await editMessageText(battle.chat_id_2, battle.battle_message_id_2, text, keyboard);
@@ -437,8 +431,8 @@ export async function sendInitialBattleMessage(battle: any) {
   const { data: u1 } = await supabase.from('users').select('win_streak').eq('telegram_id', battle.player1_id).single();
   const { data: u2 } = await supabase.from('users').select('win_streak').eq('telegram_id', battle.player2_id).single();
   
-  const p1Streak = u1?.win_streak >= 5 ? `\n🔥 <b>ON A ${u1.win_streak}-WIN STREAK!</b>` : '';
-  const p2Streak = u2?.win_streak >= 5 ? `\n🔥 <b>ON A ${u2.win_streak}-WIN STREAK!</b>` : '';
+  const p1Streak = u1 && u1.win_streak >= 5 ? `\n🔥 <b>ON A ${u1.win_streak}-WIN STREAK!</b>` : '';
+  const p2Streak = u2 && u2.win_streak >= 5 ? `\n🔥 <b>ON A ${u2.win_streak}-WIN STREAK!</b>` : '';
 
   const text = `━━━━━━━━━ ⚔️ ━━━━━━━━━\n` +
     `<b>BATTLE START: Round 1</b>\n\n` +
@@ -450,7 +444,7 @@ export async function sendInitialBattleMessage(battle: any) {
     `${p1Stats}\n\n${p2Stats}\n\n` +
     `👉 <b>Let it rip! Choose your action:</b>`;
 
-  const keyboard = getBattleKeyboard(battle.id, false, false);
+  const keyboard = getBattleKeyboard(battle);
   const res = await sendMessage(battle.chat_id, text, keyboard);
   
   let msgId2;
