@@ -3,8 +3,10 @@
 @tailwind utilities;
 
 :root {
-  --background: #0f172a; /* Slate 900 */
-  --foreground: #f8fafc; /* Slate 50 */
+  --background: #0b0f19; /* Deeper slate for arena feel */
+  --foreground: #f8fafc;
+  --glass-bg: rgba(15, 23, 42, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.08);
 }
 
 body {
@@ -12,18 +14,33 @@ body {
   color: var(--foreground);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   overflow-x: hidden;
+  background-image: 
+    radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
+    radial-gradient(circle at 50% 100%, rgba(239, 68, 68, 0.1) 0%, transparent 50%);
 }
 
 .glass-panel {
-  background: rgba(30, 41, 59, 0.7);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
   border-radius: 1rem;
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
 .text-gradient {
-  background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+  background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
+
+.bar-container {
+  @apply w-full bg-slate-800 rounded-full h-3 overflow-hidden;
+}
+
+.bar-fill {
+  @apply h-full rounded-full transition-all duration-300 ease-out; /* Fast kinetic animation */
+}
+
+.hp-fill { @apply bg-gradient-to-r from-rose-500 to-red-500; }
+.spin-fill { @apply bg-gradient-to-r from-blue-500 to-cyan-400; }
+.sp-fill { @apply bg-gradient-to-r from-amber-500 to-yellow-400; }

@@ -1,7 +1,18 @@
 import { NextResponse } from 'next/server';
+import { supabase } from '@/lib/supabase';
 import { sendMessage, answerCallbackQuery, getChallengeKeyboard, editMessageText } from '@/lib/telegram';
 import { createBattle, acceptBattle, declineBattle, submitAction, setChallengeMessageId, sendInitialBattleMessage } from '@/lib/battleService';
 import { Action } from '@/lib/engine';
+import { joinQueue, cancelQueue as cancelMatchmakingQueue, processQueue } from '@/lib/matchmakingService';
+
+function sanitizeIdentityInput(input: string, minLength: number, maxLength: number): string {
+  let sanitized = input.replace(/<\/?[^>]+(>|$)/g, ""); // Strip HTML
+  sanitized = sanitized.replace(/[\r\n]+/g, " "); // Prevent newlines
+  sanitized = sanitized.trim();
+  if (sanitized.length < minLength) return "";
+  if (sanitized.length > maxLength) return sanitized.substring(0, maxLength);
+  return sanitized;
+}
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 
@@ -22,7 +33,35 @@ export async function POST(req: Request) {
       const fromUsername = update.message.from.username || update.message.from.first_name || "Unknown";
 
       if (text.startsWith('/start')) {
-        await sendMessage(chatId, "Welcome to <b>Beyblade Bot</b>! Use /fight to challenge others.");
+        await sendMessage(chatId, "Welcome to <b>Beyblade Bot</b>! Use /fight to challenge others.\n\nCustomize your identity with:\n<code>/setbey [Name]</code> (3-16 chars)\n<code>/settitle [Title]</code> (3-24 chars)");
+      } else if (text.startsWith('/setbey ')) {
+        const rawName = text.replace('/setbey ', '');
+        const beyName = sanitizeIdentityInput(rawName, 3, 16);
+        if (!beyName) {
+           await sendMessage(chatId, "❌ Bey name must be 3-16 characters long and contain valid text.");
+        } else {
+           const { data } = await supabase.from('users').update({ bey_name: beyName, username: fromUsername }).eq('telegram_id', fromId).select();
+           if (!data || data.length === 0) {
+             await supabase.from('users').insert({ telegram_id: fromId, username: fromUsername, bey_name: beyName });
+           }
+           await sendMessage(chatId, `✅ Your Bey is now named: <b>${beyName}</b>`);
+        }
+      } else if (text.startsWith('/settitle ')) {
+        const rawTitle = text.replace('/settitle ', '');
+        const title = sanitizeIdentityInput(rawTitle, 3, 24);
+        if (!title) {
+           await sendMessage(chatId, "❌ Title must be 3-24 characters long and contain valid text.");
+        } else {
+           const { data } = await supabase.from('users').update({ title: title, username: fromUsername }).eq('telegram_id', fromId).select();
+           if (!data || data.length === 0) {
+             await supabase.from('users').insert({ telegram_id: fromId, username: fromUsername, title: title });
+           }
+           await sendMessage(chatId, `✅ Your Title is now: <b>[${title}]</b>`);
+        }
+      } else if (text.startsWith('/matchmake')) {
+        await joinQueue(chatId, fromId, fromUsername);
+      } else if (text.startsWith('/cancel')) {
+        await cancelMatchmakingQueue(chatId, fromId, update.message.message_id);
       } else if (text.startsWith('/fight')) {
         const replyToMessage = update.message.reply_to_message;
         if (!replyToMessage) {
@@ -105,6 +144,39 @@ export async function POST(req: Request) {
             }
           } else if (actionType === 'disabled') {
             await answerCallbackQuery(callbackQuery.id, "⚡ Special not ready yet!", true);
+          } else if (actionType === 'refresh_queue') {
+            const matched = await processQueue(fromId);
+            if (!matched) {
+              const { count } = await supabase.from('matchmaking_queue').select('*', { count: 'exact', head: true });
+              const text = `🌀 <b>Entering Ranked Arena...</b>\n\n` +
+                `<i>Searching for a worthy opponent...</i>\n\n` +
+                `⚔️ ${count || 1} Bladers searching the arena...`;
+              const keyboard = { inline_keyboard: [[{ text: '↻ Refresh Search', callback_data: `refresh_queue` }, { text: '❌ Cancel', callback_data: `cancel_queue` }]] };
+              await editMessageText(callbackQuery.message.chat.id, callbackQuery.message.message_id, text, keyboard);
+              await answerCallbackQuery(callbackQuery.id, "Queue refreshed.");
+            } else {
+              await answerCallbackQuery(callbackQuery.id, "Match found!");
+            }
+          } else if (actionType === 'cancel_queue') {
+            await cancelMatchmakingQueue(callbackQuery.message.chat.id, fromId, callbackQuery.message.message_id);
+            await answerCallbackQuery(callbackQuery.id, "Matchmaking cancelled.");
+          } else if (actionType === 'rematch' && parts[1]) {
+            const battleId = parts[1];
+            // Get original battle
+            const { data: oldBattle } = await supabase.from('battles').select('*').eq('id', battleId).single();
+            if (oldBattle) {
+              const player2Id = oldBattle.player1_id === fromId ? oldBattle.player2_id : oldBattle.player1_id;
+              const player2Username = oldBattle.player1_id === fromId ? oldBattle.player2_username : oldBattle.player1_username;
+              
+              const battle = await createBattle(callbackQuery.message.chat.id, fromId, fromUsername, player2Id, player2Username);
+              const res = await sendMessage(callbackQuery.message.chat.id, `⚔️ @${fromUsername} demands a rematch against @${player2Username}!`, getChallengeKeyboard(battle.id));
+              if (res && res.ok) {
+                await setChallengeMessageId(battle.id, res.result.message_id);
+              }
+              await answerCallbackQuery(callbackQuery.id, "Rematch challenged!");
+            } else {
+              await answerCallbackQuery(callbackQuery.id, "Battle not found.", true);
+            }
           } else {
             await answerCallbackQuery(callbackQuery.id);
           }

@@ -8,7 +8,7 @@
 
 -- 2. Create Users Table
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     telegram_id BIGINT UNIQUE NOT NULL,
     username TEXT,
     wins INT DEFAULT 0,
@@ -19,7 +19,7 @@ CREATE TABLE users (
 
 -- 3. Create Battles Table
 CREATE TABLE battles (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chat_id BIGINT NOT NULL,
     -- Note: 'declined' was added recently to support the decline battle feature
     status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'finished', 'declined')),
@@ -46,7 +46,7 @@ CREATE TABLE battles (
 
 -- 4. Create Battle Logs (History) Table
 CREATE TABLE battle_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     battle_id UUID REFERENCES battles(id) ON DELETE CASCADE,
     round_number INT NOT NULL,
     p1_action TEXT,
@@ -57,4 +57,38 @@ CREATE TABLE battle_logs (
     p2_spin_loss INT,
     result_text TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 5. Updated_at Trigger
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_battles_updated_at
+    BEFORE UPDATE ON battles
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- 6. Unique Constraint on Battle Logs (Make them replay-safe)
+ALTER TABLE battle_logs ADD CONSTRAINT unique_battle_round UNIQUE(battle_id, round_number);
+
+-- 7. Timeout Enforcement (pg_cron)
+-- Note: requires pg_cron extension
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+SELECT cron.schedule(
+    'battle-timeout',
+    '* * * * *', -- Run every minute
+    $$
+    UPDATE battles 
+    SET status = CASE 
+        WHEN status = 'pending' THEN 'declined'
+        WHEN status = 'active' THEN 'finished'
+    END
+    WHERE expires_at <= NOW() AND status IN ('pending', 'active');
+    $$
 );
