@@ -3,9 +3,10 @@ import { resolveRound, PlayerState, Action } from './engine';
 import { sendMessage, editMessageText, getBattleKeyboard, formatPlayerStats } from './telegram';
 
 // Start a new battle
-export async function createBattle(chatId: number, player1Id: number, player1Username: string) {
-  // Ensure user exists
+export async function createBattle(chatId: number, player1Id: number, player1Username: string, player2Id: number, player2Username: string) {
+  // Ensure users exist
   await ensureUser(player1Id, player1Username);
+  await ensureUser(player2Id, player2Username);
 
   // Expire in 10 minutes
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -17,8 +18,10 @@ export async function createBattle(chatId: number, player1Id: number, player1Use
       status: 'pending',
       player1_id: player1Id,
       player1_username: player1Username,
+      player2_id: player2Id,
+      player2_username: player2Username,
       p1_hp: 100,
-      p1_spin: 100,
+      p1_spin: 200,
       p1_charge: 0,
       p1_action: null,
       expires_at: expiresAt,
@@ -33,11 +36,8 @@ export async function createBattle(chatId: number, player1Id: number, player1Use
   return data;
 }
 
-// Join a pending battle
-export async function joinBattle(battleId: string, player2Id: number, player2Username: string) {
-  // Ensure user exists
-  await ensureUser(player2Id, player2Username);
-
+// Accept a pending battle
+export async function acceptBattle(battleId: string, player2Id: number) {
   const { data: battle, error: fetchError } = await supabase
     .from('battles')
     .select('*')
@@ -46,7 +46,7 @@ export async function joinBattle(battleId: string, player2Id: number, player2Use
 
   if (fetchError || !battle) return { error: 'Battle not found' };
   if (battle.status !== 'pending') return { error: 'Battle is no longer pending' };
-  if (battle.player1_id === player2Id) return { error: 'You cannot fight yourself!' };
+  if (battle.player2_id !== player2Id) return { error: 'You are not the challenged player!' };
 
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
@@ -54,10 +54,8 @@ export async function joinBattle(battleId: string, player2Id: number, player2Use
     .from('battles')
     .update({
       status: 'active',
-      player2_id: player2Id,
-      player2_username: player2Username,
       p2_hp: 100,
-      p2_spin: 100,
+      p2_spin: 200,
       p2_charge: 0,
       p2_action: null,
       expires_at: expiresAt,
@@ -70,8 +68,29 @@ export async function joinBattle(battleId: string, player2Id: number, player2Use
   return { battle: updated };
 }
 
+// Decline a pending battle
+export async function declineBattle(battleId: string, player2Id: number) {
+  const { data: battle, error: fetchError } = await supabase
+    .from('battles')
+    .select('*')
+    .eq('id', battleId)
+    .single();
+
+  if (fetchError || !battle) return { error: 'Battle not found' };
+  if (battle.status !== 'pending') return { error: 'Battle is no longer pending' };
+  if (battle.player2_id !== player2Id) return { error: 'You are not the challenged player!' };
+
+  const { error: updateError } = await supabase
+    .from('battles')
+    .update({ status: 'declined' })
+    .eq('id', battleId);
+
+  if (updateError) throw updateError;
+  return { success: true };
+}
+
 // Submit an action for a player
-export async function submitAction(battleId: string, playerId: number, action: Action) {
+export async function submitAction(battleId: string, playerId: number, action: Action, pKey: string) {
   // 1. Fetch battle
   const { data: battle, error: fetchError } = await supabase
     .from('battles')
@@ -84,14 +103,24 @@ export async function submitAction(battleId: string, playerId: number, action: A
 
   // 2. Validate player & check turn lock
   let isP1 = false;
-  if (battle.player1_id === playerId) {
+  let charge = 0;
+  if (pKey === 'p1') {
+    if (battle.player1_id !== playerId) return { error: 'These are not your buttons!' };
     isP1 = true;
+    charge = battle.p1_charge;
     if (battle.p1_action) return { error: 'You already submitted your action!' };
-  } else if (battle.player2_id === playerId) {
+  } else if (pKey === 'p2') {
+    if (battle.player2_id !== playerId) return { error: 'These are not your buttons!' };
     isP1 = false;
+    charge = battle.p2_charge;
     if (battle.p2_action) return { error: 'You already submitted your action!' };
   } else {
-    return { error: 'You are not part of this battle!' };
+    return { error: 'Invalid button key!' };
+  }
+
+  const currentCharge = Number(charge) || 0;
+  if (action === 'special' && currentCharge < 100) {
+    return { error: `⚡ Special not ready yet! Charge: ${currentCharge}/100` };
   }
 
   // 3. Update the action
@@ -259,7 +288,7 @@ async function updateBattleMessage(battle: any, p1LastAction: string, p2LastActi
       `${p1Stats}\n\n${p2Stats}\n\n` +
       `Choose your next action!`;
 
-    await editMessageText(battle.chat_id, battle.battle_message_id, text, getBattleKeyboard(battle.id));
+    await editMessageText(battle.chat_id, battle.battle_message_id, text, getBattleKeyboard(battle));
   }
 }
 
@@ -272,7 +301,7 @@ export async function sendInitialBattleMessage(battle: any) {
     `${p1Stats}\n\n${p2Stats}\n\n` +
     `Let it rip! Choose your action:`;
 
-  const res = await sendMessage(battle.chat_id, text, getBattleKeyboard(battle.id));
+  const res = await sendMessage(battle.chat_id, text, getBattleKeyboard(battle));
   if (res && res.ok) {
     await setBattleMessageId(battle.id, res.result.message_id);
   }

@@ -42,8 +42,12 @@ const SPECIAL_DAMAGE: Record<string, number> = {
 };
 
 export function resolveRound(p1: PlayerState, p2: PlayerState): RoundResult {
-  const raw_p1 = p1.action || "attack";
-  const raw_p2 = p2.action || "attack";
+  if (!p1.action || !p2.action) {
+    throw new Error("Cannot resolve round: Both players must have an action.");
+  }
+
+  const raw_p1 = p1.action;
+  const raw_p2 = p2.action;
 
   const eff_p1 = raw_p1 === "special" ? "attack" : raw_p1;
   const eff_p2 = raw_p2 === "special" ? "attack" : raw_p2;

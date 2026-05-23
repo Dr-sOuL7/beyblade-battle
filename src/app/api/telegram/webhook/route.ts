@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { sendMessage, answerCallbackQuery, getJoinKeyboard } from '@/lib/telegram';
-import { createBattle, joinBattle, submitAction, setChallengeMessageId, sendInitialBattleMessage } from '@/lib/battleService';
+import { sendMessage, answerCallbackQuery, getChallengeKeyboard, editMessageText } from '@/lib/telegram';
+import { createBattle, acceptBattle, declineBattle, submitAction, setChallengeMessageId, sendInitialBattleMessage } from '@/lib/battleService';
 import { Action } from '@/lib/engine';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
@@ -24,9 +24,28 @@ export async function POST(req: Request) {
       if (text.startsWith('/start')) {
         await sendMessage(chatId, "Welcome to <b>Beyblade Bot</b>! Use /fight to challenge others.");
       } else if (text.startsWith('/fight')) {
+        const replyToMessage = update.message.reply_to_message;
+        if (!replyToMessage) {
+           await sendMessage(chatId, "You must reply to a user's message to challenge them!");
+           return NextResponse.json({ ok: true });
+        }
+        
+        const player2Id = replyToMessage.from.id;
+        const player2Username = replyToMessage.from.username || replyToMessage.from.first_name || "Unknown";
+        
+        if (player2Id === fromId) {
+           await sendMessage(chatId, "You cannot challenge yourself!");
+           return NextResponse.json({ ok: true });
+        }
+        
+        if (replyToMessage.from.is_bot) {
+           await sendMessage(chatId, "You cannot challenge a bot!");
+           return NextResponse.json({ ok: true });
+        }
+
         try {
-          const battle = await createBattle(chatId, fromId, fromUsername);
-          const res = await sendMessage(chatId, `⚔️ @${fromUsername} is looking for a battle!`, getJoinKeyboard(battle.id));
+          const battle = await createBattle(chatId, fromId, fromUsername, player2Id, player2Username);
+          const res = await sendMessage(chatId, `⚔️ @${fromUsername} challenges @${player2Username} to a battle!`, getChallengeKeyboard(battle.id));
           if (res && res.ok) {
             await setChallengeMessageId(battle.id, res.result.message_id);
           }
@@ -49,28 +68,43 @@ export async function POST(req: Request) {
         const actionType = parts[0];
 
         try {
-          if (actionType === 'join_battle' && parts[1]) {
+          if (actionType === 'accept_battle' && parts[1]) {
             const battleId = parts[1];
-            const result = await joinBattle(battleId, fromId, fromUsername);
+            const result = await acceptBattle(battleId, fromId);
             
             if (result.error) {
               await answerCallbackQuery(callbackQuery.id, result.error, true);
             } else if (result.battle) {
-              await answerCallbackQuery(callbackQuery.id, "You joined the battle!");
+              await answerCallbackQuery(callbackQuery.id, "You accepted the battle!");
+              await editMessageText(callbackQuery.message.chat.id, callbackQuery.message.message_id, `⚔️ Challenge accepted!`, { inline_keyboard: [] });
               await sendInitialBattleMessage(result.battle);
             }
           } 
-          else if (actionType === 'action' && parts[1] && parts[2]) {
+          else if (actionType === 'decline_battle' && parts[1]) {
             const battleId = parts[1];
-            const move = parts[2] as Action;
+            const result = await declineBattle(battleId, fromId);
             
-            const result = await submitAction(battleId, fromId, move);
+            if (result.error) {
+              await answerCallbackQuery(callbackQuery.id, result.error, true);
+            } else {
+              await answerCallbackQuery(callbackQuery.id, "You declined the battle.");
+              await editMessageText(callbackQuery.message.chat.id, callbackQuery.message.message_id, `❌ Challenge declined.`, { inline_keyboard: [] });
+            }
+          }
+          else if (actionType === 'action' && parts[1] && parts[2] && parts[3]) {
+            const battleId = parts[1];
+            const pKey = parts[2];
+            const move = parts[3] as Action;
+            
+            const result = await submitAction(battleId, fromId, move, pKey);
             
             if (result.error) {
               await answerCallbackQuery(callbackQuery.id, result.error, true);
             } else {
               await answerCallbackQuery(callbackQuery.id, `Action queued: ${move}`);
             }
+          } else if (actionType === 'disabled') {
+            await answerCallbackQuery(callbackQuery.id, "⚡ Special not ready yet!", true);
           } else {
             await answerCallbackQuery(callbackQuery.id);
           }
