@@ -77,17 +77,25 @@ export function getChallengeKeyboard(battleId: string) {
 }
 
 export function formatPlayerStats(username: string, hp: number, spin: number, charge: number) {
-  const spinPercent = Math.round((spin / 200) * 100);
-  
-  let hpText = `${hp}%`;
-  if (hp <= 25 && hp > 0) hpText = `🩸 ${hp}% [CRITICAL WARNING]`;
+  const createBar = (current: number, max: number, fullChar: string, emptyChar: string, segments: number = 5) => {
+    const ratio = Math.max(0, Math.min(1, current / max));
+    const fullCount = Math.round(ratio * segments);
+    const emptyCount = segments - fullCount;
+    return `[${fullChar.repeat(fullCount)}${emptyChar.repeat(emptyCount)}]`;
+  };
 
-  let spinText = `${spinPercent}%`;
-  if (spin <= 50 && spin > 0) spinText = `⚠️ ${spinPercent}% [WOBBLING]`;
+  const hpBar = createBar(hp, 100, hp <= 25 ? '🟥' : '🟩', '⬛', 5);
+  const spinBar = createBar(spin, 200, '🟦', '⬛', 5);
+  const chargeBar = createBar(charge, 100, '🟨', '⬛', 5);
 
-  let spReady = `${charge}%`;
-  if (charge >= 100) spReady = '🔥 READY';
-  else if (charge >= 80) spReady = `⚡ ${charge}% [SURGING!]`;
+  let hpText = `${hpBar} ${hp}/100`;
+  if (hp <= 25 && hp > 0) hpText += ` 🩸`;
+
+  let spinText = `${spinBar} ${spin}/200`;
+  if (spin <= 50 && spin > 0) spinText += ` ⚠️`;
+
+  let spReady = `${chargeBar} ${charge}/100`;
+  if (charge >= 100) spReady += ' 🔥';
   
   return `👤 <b>${username}</b>\n` +
          `❤️ <b>HP:</b> ${hpText}\n` +

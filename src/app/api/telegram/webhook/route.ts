@@ -33,7 +33,19 @@ export async function POST(req: Request) {
       const fromUsername = update.message.from.username || update.message.from.first_name || "Unknown";
 
       if (text.startsWith('/start')) {
-        await sendMessage(chatId, "Welcome to <b>Beyblade Bot</b>! Use /fight to challenge others.\n\nCustomize your identity with:\n<code>/setbey [Name]</code> (3-16 chars)\n<code>/settitle [Title]</code> (3-24 chars)");
+        await sendMessage(chatId, "Welcome to <b>Beyblade Bot</b>!\n\nUse <code>/guide</code> for a quick tutorial on how to play.\n\nUse <code>/fight</code> to challenge someone, or <code>/matchmake</code> to find a ranked opponent.\n\nCustomize your identity with:\n<code>/setbey [Name]</code> (3-16 chars)\n<code>/settitle [Title]</code> (3-24 chars)");
+      } else if (text.startsWith('/guide')) {
+        const guideText = `📖 <b>Beyblade Bot Guide</b>\n\n` +
+          `<b>How to Play:</b>\n` +
+          `1️⃣ Use <code>/matchmake</code> to queue for a random battle, or reply to someone's message with <code>/fight</code> to challenge them.\n` +
+          `2️⃣ In battle, you and your opponent choose an action secretly.\n` +
+          `3️⃣ Once both choose, the round resolves! Reduce your opponent's HP or Spin to 0 to win.\n\n` +
+          `<b>Combat Mechanics:</b>\n` +
+          `⚔️ <b>Attack:</b> High damage, reduces your spin.\n` +
+          `🛡️ <b>Defend:</b> Blocks attacks, builds Special Charge (SP).\n` +
+          `💨 <b>Evade:</b> Dodges attacks, but loses to Defend.\n` +
+          `✨ <b>Special:</b> Unlocks at 100 SP. Massive damage!`;
+        await sendMessage(chatId, guideText);
       } else if (text.startsWith('/setbey ')) {
         const rawName = text.replace('/setbey ', '');
         const beyName = sanitizeIdentityInput(rawName, 3, 16);
