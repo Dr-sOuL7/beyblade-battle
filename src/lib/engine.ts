@@ -36,9 +36,9 @@ const COMBAT_TABLE: Record<string, [number, number, number, number, number, numb
 };
 
 const SPECIAL_DAMAGE: Record<string, number> = {
-  attack: 20,
-  defend: 15,
-  evade: 10,
+  attack: 25,
+  defend: 10,
+  evade: 35,
 };
 
 export function resolveRound(p1: PlayerState, p2: PlayerState): RoundResult {
@@ -57,12 +57,10 @@ export function resolveRound(p1: PlayerState, p2: PlayerState): RoundResult {
 
   if (raw_p1 === "special") {
     p2_hp_loss = SPECIAL_DAMAGE[eff_p2];
-    p1.charge = 0;
   }
 
   if (raw_p2 === "special") {
     p1_hp_loss = SPECIAL_DAMAGE[eff_p1];
-    p2.charge = 0;
   }
 
   p1.spin = Math.max(0, p1.spin - p1_spin_loss);
@@ -71,6 +69,9 @@ export function resolveRound(p1: PlayerState, p2: PlayerState): RoundResult {
   p2.health = Math.max(0, p2.health - p2_hp_loss);
   p1.charge = Math.min(100, p1.charge + p1_charge);
   p2.charge = Math.min(100, p2.charge + p2_charge);
+
+  if (raw_p1 === "special") p1.charge = 0;
+  if (raw_p2 === "special") p2.charge = 0;
 
   const PASSIVE_SPIN = 5;
   p1.spin = Math.max(0, p1.spin - PASSIVE_SPIN);

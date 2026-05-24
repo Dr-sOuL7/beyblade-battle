@@ -193,6 +193,8 @@ export async function submitAction(battleId: string, playerId: number, action: A
     return { status: 'round_resolved' };
   }
 
+  await updateWaitingMessage(updatedBattle);
+
   return { status: 'waiting' };
 }
 
@@ -323,8 +325,8 @@ async function resolveBattleRound(battle: any) {
     p2_hp: newP2Hp,
     p1_spin: newP1Spin,
     p2_spin: newP2Spin,
-    p1_charge: result.p1_charge,
-    p2_charge: result.p2_charge,
+    p1_charge: p1.charge,
+    p2_charge: p2.charge,
     round_number: battle.round_number + 1,
     p1_action: null,
     p2_action: null,
@@ -381,6 +383,32 @@ export async function setChallengeMessageId(battleId: string, messageId: number)
   await supabase.from('battles').update({ challenge_message_id: messageId }).eq('id', battleId);
 }
 
+async function updateWaitingMessage(battle: any) {
+  if (!battle.battle_message_id) return;
+
+  const p1Stats = formatPlayerStats(battle.player1_username, battle.p1_hp, battle.p1_spin, battle.p1_charge);
+  const p2Stats = formatPlayerStats(battle.player2_username, battle.p2_hp, battle.p2_spin, battle.p2_charge);
+  const divider = (battle.round_number >= 5 || battle.p1_hp <= 30 || battle.p2_hp <= 30) 
+                  ? `🔥🔥━━━━━ ⚔️ ━━━━━🔥🔥` 
+                  : `━━━━━━━━━ ⚔️ ━━━━━━━━━`;
+
+  const p1Status = battle.p1_action ? "🔒 <b>Locked In</b>" : "🤔 <i>Thinking...</i>";
+  const p2Status = battle.p2_action ? "🔒 <b>Locked In</b>" : "🤔 <i>Thinking...</i>";
+
+  const text = `${divider}\n` +
+    `<b>Round ${battle.round_number}</b>\n\n` +
+    `<i>Waiting for combatants...</i>\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━\n` +
+    `${p1Stats}\n└ Status: ${p1Status}\n\n${p2Stats}\n└ Status: ${p2Status}\n\n` +
+    `👉 <b>Choose your next action!</b>`;
+
+  const keyboard = getBattleKeyboard(battle);
+  await editMessageText(battle.chat_id, battle.battle_message_id, text, keyboard);
+  if (battle.chat_id_2 && battle.battle_message_id_2) {
+    await editMessageText(battle.chat_id_2, battle.battle_message_id_2, text, keyboard);
+  }
+}
+
 async function updateBattleMessage(battle: any, p1LastAction: string, p2LastAction: string, resultText: string) {
   if (!battle.battle_message_id) return;
 
@@ -407,7 +435,7 @@ async function updateBattleMessage(battle: any, p1LastAction: string, p2LastActi
       `<b>Round ${battle.round_number}</b>\n\n` +
       `<i>${resultText}</i>\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━\n` +
-      `${p1Stats}\n\n${p2Stats}\n\n` +
+      `${p1Stats}\n└ Status: 🤔 <i>Thinking...</i>\n\n${p2Stats}\n└ Status: 🤔 <i>Thinking...</i>\n\n` +
       `👉 <b>Choose your next action!</b>`;
 
     const keyboard = getBattleKeyboard(battle);
@@ -441,7 +469,7 @@ export async function sendInitialBattleMessage(battle: any) {
     `⚔️ [${p2Title}] <b>@${battle.player2_username}</b> enters the arena!${p2Streak}\n` +
     `🌀 Bey: <i>${p2Bey}</i>\n\n` +
     `━━━━━━━━━━━━━━━━━━━━━\n` +
-    `${p1Stats}\n\n${p2Stats}\n\n` +
+    `${p1Stats}\n└ Status: 🤔 <i>Thinking...</i>\n\n${p2Stats}\n└ Status: 🤔 <i>Thinking...</i>\n\n` +
     `👉 <b>Let it rip! Choose your action:</b>`;
 
   const keyboard = getBattleKeyboard(battle);
