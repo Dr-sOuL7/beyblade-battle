@@ -1,4 +1,7 @@
-export type Action = "attack" | "defend" | "evade" | "special" | null;
+import { getMatrixEntry, CombatAction, SPECIAL_THRESHOLD, MAX_SPECIAL } from './combatMatrix';
+
+// Re-export CombatAction for backwards compatibility
+export type Action = CombatAction | null;
 
 export interface PlayerState {
   user_id: number;
@@ -10,101 +13,121 @@ export interface PlayerState {
 }
 
 export interface RoundResult {
-  p1_spin_loss: number;
-  p2_spin_loss: number;
+  // Deltas (always positive — represent amount lost/gained)
   p1_hp_loss: number;
   p2_hp_loss: number;
-  p1_charge: number;
-  p2_charge: number;
+  p1_spin_loss: number;
+  p2_spin_loss: number;
+  p1_special_delta: number;
+  p2_special_delta: number;
+
+  // Flags
   p1_used_special: boolean;
   p2_used_special: boolean;
-  winner: "p1" | "p2" | "draw" | null;
+
+  // Resulting state after applying deltas
+  p1_hp_after: number;
+  p2_hp_after: number;
+  p1_spin_after: number;
+  p2_spin_after: number;
+  p1_special_after: number;
+  p2_special_after: number;
+
+  // Outcome
+  winner: 'p1' | 'p2' | 'draw' | null;
   p1_cause: string;
   p2_cause: string;
 }
 
-const COMBAT_TABLE: Record<string, [number, number, number, number, number, number]> = {
-  "attack-attack": [15, 15, 10, 10, 5, 5],
-  "attack-defend": [10, 5, 0, 5, 5, 15],
-  "attack-evade": [5, 0, 0, 0, 0, 10],
-  "defend-attack": [5, 10, 5, 0, 15, 5],
-  "defend-defend": [0, 0, 0, 0, 0, 0],
-  "defend-evade": [0, 0, 0, 0, 0, 0],
-  "evade-attack": [0, 5, 0, 0, 10, 0],
-  "evade-defend": [0, 0, 0, 0, 0, 0],
-  "evade-evade": [0, 0, 0, 0, 0, 0],
-};
-
-const SPECIAL_DAMAGE: Record<string, number> = {
-  attack: 25,
-  defend: 10,
-  evade: 35,
-};
-
+/**
+ * Resolves a single round of combat using the deterministic combat matrix.
+ *
+ * This is a PURE FUNCTION — it does NOT mutate p1 or p2.
+ * All state changes are returned in the RoundResult.
+ */
 export function resolveRound(p1: PlayerState, p2: PlayerState): RoundResult {
   if (!p1.action || !p2.action) {
-    throw new Error("Cannot resolve round: Both players must have an action.");
+    throw new Error('Cannot resolve round: Both players must have an action.');
   }
 
-  const raw_p1 = p1.action;
-  const raw_p2 = p2.action;
+  const p1Action = p1.action as CombatAction;
+  const p2Action = p2.action as CombatAction;
 
-  const eff_p1 = raw_p1 === "special" ? "attack" : raw_p1;
-  const eff_p2 = raw_p2 === "special" ? "attack" : raw_p2;
+  // Look up the exact outcome from the matrix
+  const matrix = getMatrixEntry(p1Action, p2Action);
 
-  const key = `${eff_p1}-${eff_p2}`;
-  let [p1_spin_loss, p2_spin_loss, p1_hp_loss, p2_hp_loss, p1_charge, p2_charge] = COMBAT_TABLE[key];
+  // Extract deltas
+  const p1_hp_loss = matrix.p1HpLoss;
+  const p2_hp_loss = matrix.p2HpLoss;
+  const p1_spin_loss = matrix.p1SpinLoss;
+  const p2_spin_loss = matrix.p2SpinLoss;
 
-  if (raw_p1 === "special") {
-    p2_hp_loss = SPECIAL_DAMAGE[eff_p2];
+  const p1_used_special = p1Action === 'special';
+  const p2_used_special = p2Action === 'special';
+
+  // Compute special meter changes
+  // If SPECIAL was used: meter resets to 0 (delta is the negative of current charge)
+  // Otherwise: gain the matrix value, clamped to MAX_SPECIAL
+  let p1_special_after: number;
+  let p2_special_after: number;
+  let p1_special_delta: number;
+  let p2_special_delta: number;
+
+  if (p1_used_special) {
+    p1_special_after = 0;
+    p1_special_delta = 0; // Reset — the "gain" from matrix is 0 for special rows
+  } else {
+    p1_special_after = Math.min(MAX_SPECIAL, Math.max(0, p1.charge + matrix.p1Special));
+    p1_special_delta = matrix.p1Special;
   }
 
-  if (raw_p2 === "special") {
-    p1_hp_loss = SPECIAL_DAMAGE[eff_p1];
+  if (p2_used_special) {
+    p2_special_after = 0;
+    p2_special_delta = 0;
+  } else {
+    p2_special_after = Math.min(MAX_SPECIAL, Math.max(0, p2.charge + matrix.p2Special));
+    p2_special_delta = matrix.p2Special;
   }
 
-  p1.spin = Math.max(0, p1.spin - p1_spin_loss);
-  p2.spin = Math.max(0, p2.spin - p2_spin_loss);
-  p1.health = Math.max(0, p1.health - p1_hp_loss);
-  p2.health = Math.max(0, p2.health - p2_hp_loss);
-  p1.charge = Math.min(100, p1.charge + p1_charge);
-  p2.charge = Math.min(100, p2.charge + p2_charge);
+  // Compute resulting HP and Spin (clamped to minimum 0)
+  const p1_hp_after = Math.max(0, p1.health - p1_hp_loss);
+  const p2_hp_after = Math.max(0, p2.health - p2_hp_loss);
+  const p1_spin_after = Math.max(0, p1.spin - p1_spin_loss);
+  const p2_spin_after = Math.max(0, p2.spin - p2_spin_loss);
 
-  if (raw_p1 === "special") p1.charge = 0;
-  if (raw_p2 === "special") p2.charge = 0;
+  // Determine winner
+  const p1_dead = p1_hp_after <= 0 || p1_spin_after <= 0;
+  const p2_dead = p2_hp_after <= 0 || p2_spin_after <= 0;
 
-  const PASSIVE_SPIN = 5;
-  p1.spin = Math.max(0, p1.spin - PASSIVE_SPIN);
-  p2.spin = Math.max(0, p2.spin - PASSIVE_SPIN);
-  p1_spin_loss += PASSIVE_SPIN;
-  p2_spin_loss += PASSIVE_SPIN;
+  let winner: 'p1' | 'p2' | 'draw' | null = null;
+  if (p1_dead && p2_dead) winner = 'draw';
+  else if (p1_dead) winner = 'p2';
+  else if (p2_dead) winner = 'p1';
 
-  const p1_dead = p1.health <= 0 || p1.spin <= 0;
-  const p2_dead = p2.health <= 0 || p2.spin <= 0;
-
-  let winner: "p1" | "p2" | "draw" | null = null;
-  if (p1_dead && p2_dead) winner = "draw";
-  else if (p1_dead) winner = "p2";
-  else if (p2_dead) winner = "p1";
-
-  const cause = (p: PlayerState) => {
-    if (p.health <= 0 && p.spin <= 0) return "KO + Spin Over!";
-    if (p.health <= 0) return "KO!";
-    if (p.spin <= 0) return "Spin Over!";
-    return "";
+  const cause = (hp: number, spin: number): string => {
+    if (hp <= 0 && spin <= 0) return 'KO + Spin Over!';
+    if (hp <= 0) return 'KO!';
+    if (spin <= 0) return 'Spin Over!';
+    return '';
   };
 
   return {
-    p1_spin_loss,
-    p2_spin_loss,
     p1_hp_loss,
     p2_hp_loss,
-    p1_charge,
-    p2_charge,
-    p1_used_special: raw_p1 === "special",
-    p2_used_special: raw_p2 === "special",
+    p1_spin_loss,
+    p2_spin_loss,
+    p1_special_delta,
+    p2_special_delta,
+    p1_used_special,
+    p2_used_special,
+    p1_hp_after,
+    p2_hp_after,
+    p1_spin_after,
+    p2_spin_after,
+    p1_special_after,
+    p2_special_after,
     winner,
-    p1_cause: cause(p1),
-    p2_cause: cause(p2),
+    p1_cause: cause(p1_hp_after, p1_spin_after),
+    p2_cause: cause(p2_hp_after, p2_spin_after),
   };
 }

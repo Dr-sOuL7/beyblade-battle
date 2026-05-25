@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { supabase } from "@/lib/supabase";
+import { INITIAL_HP, INITIAL_SPIN, MAX_SPECIAL } from "@/lib/combatMatrix";
 
 function AnimatedBar({ value, max, fillClass, label }: { value: number, max: number, fillClass: string, label: string }) {
   const percent = Math.max(0, Math.min(100, Math.round((value / max) * 100)));
@@ -63,9 +64,9 @@ export default async function BattlePage({ params }: { params: { id: string } })
               <div className="text-[10px] text-blue-400 font-bold uppercase tracking-widest truncate mb-1 bg-blue-500/10 inline-block px-2 py-0.5 rounded-full border border-blue-500/20">[{battle.p1_title || 'Rookie'}]</div>
               <h2 className="text-3xl font-black mb-1 truncate text-blue-100 drop-shadow-sm">{battle.player1_username || 'Player 1'}</h2>
               <div className="text-xs font-mono text-blue-300/60 mb-4 truncate italic">🌀 {battle.p1_bey_name || 'Default Bey'}</div>
-              <AnimatedBar value={battle.p1_hp} max={100} fillClass="hp-fill" label="Health" />
-              <AnimatedBar value={battle.p1_spin} max={200} fillClass="spin-fill" label="Spin" />
-              <AnimatedBar value={battle.p1_charge} max={100} fillClass="sp-fill" label="Special" />
+              <AnimatedBar value={battle.p1_hp} max={INITIAL_HP} fillClass="hp-fill" label="Health" />
+              <AnimatedBar value={battle.p1_spin} max={INITIAL_SPIN} fillClass="spin-fill" label="Spin" />
+              <AnimatedBar value={battle.p1_charge} max={MAX_SPECIAL} fillClass="sp-fill" label="Special" />
             </div>
 
             {/* VS Badge */}
@@ -76,6 +77,11 @@ export default async function BattlePage({ params }: { params: { id: string } })
               <div className="mt-2 uppercase tracking-widest text-xs font-bold text-amber-400 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
                 Round {battle.round_number}
               </div>
+              {battle.combat_version && (
+                <div className="mt-1 text-[9px] text-slate-500 font-mono uppercase tracking-widest">
+                  {battle.combat_version}
+                </div>
+              )}
             </div>
 
             {/* Player 2 Stats */}
@@ -83,9 +89,9 @@ export default async function BattlePage({ params }: { params: { id: string } })
               <div className="text-[10px] text-rose-400 font-bold uppercase tracking-widest truncate mb-1 bg-rose-500/10 inline-block px-2 py-0.5 rounded-full border border-rose-500/20">[{battle.p2_title || 'Rookie'}]</div>
               <h2 className="text-3xl font-black mb-1 truncate text-rose-100 drop-shadow-sm">{battle.player2_username || 'Player 2'}</h2>
               <div className="text-xs font-mono text-rose-300/60 mb-4 truncate italic">🌀 {battle.p2_bey_name || 'Default Bey'}</div>
-              <AnimatedBar value={battle.p2_hp} max={100} fillClass="hp-fill" label="Health" />
-              <AnimatedBar value={battle.p2_spin} max={200} fillClass="spin-fill" label="Spin" />
-              <AnimatedBar value={battle.p2_charge} max={100} fillClass="sp-fill" label="Special" />
+              <AnimatedBar value={battle.p2_hp} max={INITIAL_HP} fillClass="hp-fill" label="Health" />
+              <AnimatedBar value={battle.p2_spin} max={INITIAL_SPIN} fillClass="spin-fill" label="Spin" />
+              <AnimatedBar value={battle.p2_charge} max={MAX_SPECIAL} fillClass="sp-fill" label="Special" />
             </div>
 
           </div>
@@ -133,10 +139,18 @@ export default async function BattlePage({ params }: { params: { id: string } })
                   <div className="text-center">
                     <div className="text-xs text-slate-400 uppercase font-bold mb-1">P1 Action</div>
                     <div className="text-2xl" title={log.p1_action}>{actionIcon(log.p1_action)}</div>
-                    {(log.p1_hp_loss > 0 || log.p1_spin_loss > 0) && (
-                      <div className="text-[10px] text-rose-400 font-mono mt-1">
-                        {log.p1_hp_loss > 0 && `-${log.p1_hp_loss}HP `}
-                        {log.p1_spin_loss > 0 && `-${log.p1_spin_loss}SPIN`}
+                    <div className="text-[10px] text-rose-400 font-mono mt-1 space-y-0.5">
+                      {log.p1_hp_loss > 0 && <div>-{log.p1_hp_loss}HP</div>}
+                      {log.p1_spin_loss > 0 && <div>-{log.p1_spin_loss}SPIN</div>}
+                      {log.p1_special_delta > 0 && <div className="text-amber-400">+{log.p1_special_delta}SP</div>}
+                      {log.p1_action === 'special' && <div className="text-purple-400">SP USED</div>}
+                    </div>
+                    {/* After-state snapshot */}
+                    {log.p1_hp_after !== null && log.p1_hp_after !== undefined && (
+                      <div className="text-[9px] text-slate-500 font-mono mt-2 border-t border-slate-700/50 pt-1">
+                        <div>❤️{log.p1_hp_after}</div>
+                        <div>🌀{log.p1_spin_after}</div>
+                        <div>⚡{log.p1_special_after}</div>
                       </div>
                     )}
                   </div>
@@ -144,10 +158,18 @@ export default async function BattlePage({ params }: { params: { id: string } })
                   <div className="text-center">
                     <div className="text-xs text-slate-400 uppercase font-bold mb-1">P2 Action</div>
                     <div className="text-2xl" title={log.p2_action}>{actionIcon(log.p2_action)}</div>
-                    {(log.p2_hp_loss > 0 || log.p2_spin_loss > 0) && (
-                      <div className="text-[10px] text-rose-400 font-mono mt-1">
-                        {log.p2_hp_loss > 0 && `-${log.p2_hp_loss}HP `}
-                        {log.p2_spin_loss > 0 && `-${log.p2_spin_loss}SPIN`}
+                    <div className="text-[10px] text-rose-400 font-mono mt-1 space-y-0.5">
+                      {log.p2_hp_loss > 0 && <div>-{log.p2_hp_loss}HP</div>}
+                      {log.p2_spin_loss > 0 && <div>-{log.p2_spin_loss}SPIN</div>}
+                      {log.p2_special_delta > 0 && <div className="text-amber-400">+{log.p2_special_delta}SP</div>}
+                      {log.p2_action === 'special' && <div className="text-purple-400">SP USED</div>}
+                    </div>
+                    {/* After-state snapshot */}
+                    {log.p2_hp_after !== null && log.p2_hp_after !== undefined && (
+                      <div className="text-[9px] text-slate-500 font-mono mt-2 border-t border-slate-700/50 pt-1">
+                        <div>❤️{log.p2_hp_after}</div>
+                        <div>🌀{log.p2_spin_after}</div>
+                        <div>⚡{log.p2_special_after}</div>
                       </div>
                     )}
                   </div>

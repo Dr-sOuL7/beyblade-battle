@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run tests/engine.test.ts",
+    "test:simulation": "vitest run tests/simulation.test.ts",
+    "test:all": "vitest run tests/",
     "test:integration": "dotenv -e .env.local -- vitest run tests/integration.test.ts"
   },
   "dependencies": {

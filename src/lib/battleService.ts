@@ -1,8 +1,79 @@
 import { supabase } from './supabase';
 import { resolveRound, PlayerState, Action } from './engine';
-import { sendMessage, editMessageText, getBattleKeyboard, formatPlayerStats } from './telegram';
+import { sendMessage, editMessageText, getBattleKeyboard, formatPlayerStats, formatRoundResult } from './telegram';
 import { getRoundNarration } from './narration';
 import { calculateEloChange, getRankDetails } from './ranking';
+import { INITIAL_HP, INITIAL_SPIN, INITIAL_SPECIAL, COMBAT_VERSION, CombatAction } from './combatMatrix';
+
+// ============================================================
+// Telemetry Helpers
+// ============================================================
+
+interface BattleTelemetry {
+  action_counts: Record<string, { p1: number; p2: number }>;
+  round_actions: { p1: string; p2: string }[];
+  specials_used: { round: number; player: 'p1' | 'p2' }[];
+  total_rounds: number;
+}
+
+function initTelemetry(): BattleTelemetry {
+  return {
+    action_counts: {
+      attack: { p1: 0, p2: 0 },
+      defend: { p1: 0, p2: 0 },
+      evade: { p1: 0, p2: 0 },
+      special: { p1: 0, p2: 0 },
+    },
+    round_actions: [],
+    specials_used: [],
+    total_rounds: 0,
+  };
+}
+
+function updateTelemetry(telemetry: BattleTelemetry, roundNumber: number, p1Action: string, p2Action: string): BattleTelemetry {
+  const t = { ...telemetry };
+  t.action_counts = { ...t.action_counts };
+  t.round_actions = [...t.round_actions, { p1: p1Action, p2: p2Action }];
+  t.total_rounds = roundNumber;
+
+  // Count actions
+  if (t.action_counts[p1Action]) {
+    t.action_counts[p1Action] = { ...t.action_counts[p1Action], p1: t.action_counts[p1Action].p1 + 1 };
+  }
+  if (t.action_counts[p2Action]) {
+    t.action_counts[p2Action] = { ...t.action_counts[p2Action], p2: t.action_counts[p2Action].p2 + 1 };
+  }
+
+  // Track special usage timing
+  if (p1Action === 'special') t.specials_used = [...t.specials_used, { round: roundNumber, player: 'p1' }];
+  if (p2Action === 'special') t.specials_used = [...t.specials_used, { round: roundNumber, player: 'p2' }];
+
+  return t;
+}
+
+function computeTelemetrySummary(telemetry: BattleTelemetry) {
+  const { round_actions } = telemetry;
+  
+  // Longest repeated-action streaks per player
+  let p1MaxStreak = 0, p2MaxStreak = 0;
+  let p1Streak = 1, p2Streak = 1;
+  for (let i = 1; i < round_actions.length; i++) {
+    if (round_actions[i].p1 === round_actions[i - 1].p1) { p1Streak++; } else { p1Streak = 1; }
+    if (round_actions[i].p2 === round_actions[i - 1].p2) { p2Streak++; } else { p2Streak = 1; }
+    p1MaxStreak = Math.max(p1MaxStreak, p1Streak);
+    p2MaxStreak = Math.max(p2MaxStreak, p2Streak);
+  }
+
+  return {
+    ...telemetry,
+    p1_max_repeat_streak: round_actions.length > 0 ? p1MaxStreak : 0,
+    p2_max_repeat_streak: round_actions.length > 0 ? p2MaxStreak : 0,
+  };
+}
+
+// ============================================================
+// Battle CRUD
+// ============================================================
 
 // Start a new battle
 export async function createBattle(chatId: number, player1Id: number, player1Username: string, player2Id: number, player2Username: string) {
@@ -26,10 +97,12 @@ export async function createBattle(chatId: number, player1Id: number, player1Use
       p1_bey_name: u1?.bey_name || 'Default Bey',
       p2_title: u2?.title || 'Rookie',
       p2_bey_name: u2?.bey_name || 'Default Bey',
-      p1_hp: 100,
-      p1_spin: 200,
-      p1_charge: 0,
+      p1_hp: INITIAL_HP,
+      p1_spin: INITIAL_SPIN,
+      p1_charge: INITIAL_SPECIAL,
       p1_action: null,
+      combat_version: COMBAT_VERSION,
+      telemetry: initTelemetry(),
       expires_at: expiresAt,
     })
     .select()
@@ -63,14 +136,16 @@ export async function createActiveBattle(p1: any, p2: any) {
       p1_bey_name: u1?.bey_name || 'Default Bey',
       p2_title: u2?.title || 'Rookie',
       p2_bey_name: u2?.bey_name || 'Default Bey',
-      p1_hp: 100,
-      p1_spin: 200,
-      p1_charge: 0,
-      p2_hp: 100,
-      p2_spin: 200,
-      p2_charge: 0,
+      p1_hp: INITIAL_HP,
+      p1_spin: INITIAL_SPIN,
+      p1_charge: INITIAL_SPECIAL,
+      p2_hp: INITIAL_HP,
+      p2_spin: INITIAL_SPIN,
+      p2_charge: INITIAL_SPECIAL,
       p1_action: null,
       p2_action: null,
+      combat_version: COMBAT_VERSION,
+      telemetry: initTelemetry(),
       expires_at: expiresAt,
     })
     .select()
@@ -98,9 +173,9 @@ export async function acceptBattle(battleId: string, player2Id: number) {
     .from('battles')
     .update({
       status: 'active',
-      p2_hp: 100,
-      p2_spin: 200,
-      p2_charge: 0,
+      p2_hp: INITIAL_HP,
+      p2_spin: INITIAL_SPIN,
+      p2_charge: INITIAL_SPECIAL,
       p2_action: null,
       expires_at: expiresAt,
     })
@@ -132,6 +207,10 @@ export async function declineBattle(battleId: string, player2Id: number) {
   if (updateError) throw updateError;
   return { success: true };
 }
+
+// ============================================================
+// Action Submission
+// ============================================================
 
 // Submit an action for a player
 export async function submitAction(battleId: string, playerId: number, action: Action, pKey: string) {
@@ -198,6 +277,10 @@ export async function submitAction(battleId: string, playerId: number, action: A
   return { status: 'waiting' };
 }
 
+// ============================================================
+// Round Resolution
+// ============================================================
+
 // Resolves a round, updates DB and Telegram
 async function resolveBattleRound(battle: any) {
   // Explicit invariant validation
@@ -206,6 +289,7 @@ async function resolveBattleRound(battle: any) {
   if (battle.status !== 'active') return;
   if (battle.winner) return;
 
+  // Build player state snapshots (these are NOT mutated by resolveRound)
   const p1: PlayerState = {
     user_id: battle.player1_id,
     username: battle.player1_username,
@@ -224,15 +308,36 @@ async function resolveBattleRound(battle: any) {
     action: battle.p2_action,
   };
 
+  // Resolve using pure function — p1 and p2 are NOT mutated
   const result = resolveRound(p1, p2);
 
-  const newP1Hp = Math.max(0, p1.health - result.p1_hp_loss);
-  const newP2Hp = Math.max(0, p2.health - result.p2_hp_loss);
-  const newP1Spin = Math.max(0, p1.spin - result.p1_spin_loss);
-  const newP2Spin = Math.max(0, p2.spin - result.p2_spin_loss);
+  // Use the after-state directly from the pure engine result
+  const newP1Hp = result.p1_hp_after;
+  const newP2Hp = result.p2_hp_after;
+  const newP1Spin = result.p1_spin_after;
+  const newP2Spin = result.p2_spin_after;
+  const newP1Charge = result.p1_special_after;
+  const newP2Charge = result.p2_special_after;
 
+  // --- Build result text ---
   const isClimax = battle.round_number >= 5 || newP1Hp <= 30 || newP2Hp <= 30;
-  let resultText = getRoundNarration(p1.username, p2.username, battle.p1_action, battle.p2_action, isClimax);
+
+  // Narration flavor text
+  let narration = getRoundNarration(p1.username, p2.username, battle.p1_action, battle.p2_action, isClimax);
+
+  // Structured damage report
+  const structuredReport = formatRoundResult(
+    p1.username,
+    p2.username,
+    battle.p1_action,
+    battle.p2_action,
+    result,
+    battle.round_number,
+  );
+
+  // Combine narration + structured report
+  let resultText = `${narration}\n\n${structuredReport}`;
+
   let highlights = battle.highlights || [];
 
   if (result.p1_hp_loss >= 15 && result.p2_hp_loss >= 15) {
@@ -245,7 +350,7 @@ async function resolveBattleRound(battle: any) {
     if (!highlights.includes('miracle_survival')) highlights.push('miracle_survival');
   }
 
-  // Create battle log
+  // --- Winner handling ---
   if (result.winner) {
     if (result.winner === 'draw') {
       resultText += "\n\n🔥💥 <b>MUTUAL DESTRUCTION! Both bladers fall simultaneously!</b>";
@@ -267,9 +372,13 @@ async function resolveBattleRound(battle: any) {
 
       const eloChange = calculateEloChange(u1.elo, u2.elo, result.winner);
       
+      const p1NewRank = getRankDetails(eloChange.newP1Elo, u1.total_battles + 1);
+      const p2NewRank = getRankDetails(eloChange.newP2Elo, u2.total_battles + 1);
+
       const updateU1 = {
         total_battles: u1.total_battles + 1,
         elo: eloChange.newP1Elo,
+        title: p1NewRank.name,
         wins: result.winner === 'p1' ? u1.wins + 1 : u1.wins,
         losses: result.winner === 'p2' ? u1.losses + 1 : u1.losses,
         win_streak: result.winner === 'p1' ? u1.win_streak + 1 : (result.winner === 'p2' ? 0 : u1.win_streak),
@@ -279,6 +388,7 @@ async function resolveBattleRound(battle: any) {
       const updateU2 = {
         total_battles: u2.total_battles + 1,
         elo: eloChange.newP2Elo,
+        title: p2NewRank.name,
         wins: result.winner === 'p2' ? u2.wins + 1 : u2.wins,
         losses: result.winner === 'p1' ? u2.losses + 1 : u2.losses,
         win_streak: result.winner === 'p2' ? u2.win_streak + 1 : (result.winner === 'p1' ? 0 : u2.win_streak),
@@ -287,9 +397,6 @@ async function resolveBattleRound(battle: any) {
 
       await supabase.from('users').update(updateU1).eq('telegram_id', u1.telegram_id);
       await supabase.from('users').update(updateU2).eq('telegram_id', u2.telegram_id);
-
-      const p1NewRank = getRankDetails(updateU1.elo, updateU1.total_battles);
-      const p2NewRank = getRankDetails(updateU2.elo, updateU2.total_battles);
 
       const p1Promoted = p1OldRank.name !== p1NewRank.name && updateU1.total_battles >= 5 && result.winner === 'p1';
       const p2Promoted = p2OldRank.name !== p2NewRank.name && updateU2.total_battles >= 5 && result.winner === 'p2';
@@ -304,6 +411,19 @@ async function resolveBattleRound(battle: any) {
     }
   }
 
+  // --- Update Telemetry ---
+  const currentTelemetry: BattleTelemetry = battle.telemetry && typeof battle.telemetry === 'object'
+    ? battle.telemetry as BattleTelemetry
+    : initTelemetry();
+  
+  let updatedTelemetry = updateTelemetry(currentTelemetry, battle.round_number, battle.p1_action, battle.p2_action);
+  
+  // Compute summary stats on game end
+  if (result.winner) {
+    updatedTelemetry = computeTelemetrySummary(updatedTelemetry) as BattleTelemetry;
+  }
+
+  // --- Create battle log with full state snapshot ---
   await supabase.from('battle_logs').insert({
     battle_id: battle.id,
     round_number: battle.round_number,
@@ -313,10 +433,18 @@ async function resolveBattleRound(battle: any) {
     p2_hp_loss: result.p2_hp_loss,
     p1_spin_loss: result.p1_spin_loss,
     p2_spin_loss: result.p2_spin_loss,
+    p1_special_delta: result.p1_special_delta,
+    p2_special_delta: result.p2_special_delta,
+    p1_hp_after: newP1Hp,
+    p2_hp_after: newP2Hp,
+    p1_spin_after: newP1Spin,
+    p2_spin_after: newP2Spin,
+    p1_special_after: newP1Charge,
+    p2_special_after: newP2Charge,
     result_text: resultText,
   });
 
-  // Update battle state
+  // --- Update battle state ---
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
   
   const updatePayload: any = {
@@ -325,13 +453,14 @@ async function resolveBattleRound(battle: any) {
     p2_hp: newP2Hp,
     p1_spin: newP1Spin,
     p2_spin: newP2Spin,
-    p1_charge: p1.charge,
-    p2_charge: p2.charge,
+    p1_charge: newP1Charge,
+    p2_charge: newP2Charge,
     round_number: battle.round_number + 1,
     p1_action: null,
     p2_action: null,
     expires_at: expiresAt,
-    highlights: highlights
+    highlights: highlights,
+    telemetry: updatedTelemetry,
   };
 
   if (result.winner) {
@@ -359,6 +488,10 @@ async function resolveBattleRound(battle: any) {
   await updateBattleMessage(newBattle, battle.p1_action, battle.p2_action, resultText);
 }
 
+// ============================================================
+// User Management
+// ============================================================
+
 export async function ensureUser(telegramId: number, username: string) {
   const { data, error } = await supabase.from('users').select('*').eq('telegram_id', telegramId).maybeSingle();
   if (!data) {
@@ -382,6 +515,10 @@ export async function setBattleMessageId(battleId: string, messageId: number, me
 export async function setChallengeMessageId(battleId: string, messageId: number) {
   await supabase.from('battles').update({ challenge_message_id: messageId }).eq('id', battleId);
 }
+
+// ============================================================
+// Telegram Message Builders
+// ============================================================
 
 async function updateWaitingMessage(battle: any) {
   if (!battle.battle_message_id) return;

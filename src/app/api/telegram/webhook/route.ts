@@ -33,18 +33,22 @@ export async function POST(req: Request) {
       const fromUsername = update.message.from.username || update.message.from.first_name || "Unknown";
 
       if (text.startsWith('/start')) {
-        await sendMessage(chatId, "Welcome to <b>Beyblade Bot</b>!\n\nUse <code>/guide</code> for a quick tutorial on how to play.\n\nUse <code>/fight</code> to challenge someone, or <code>/matchmake</code> to find a ranked opponent.\n\nCustomize your identity with:\n<code>/setbey [Name]</code> (3-16 chars)\n<code>/settitle [Title]</code> (3-24 chars)");
+        await sendMessage(chatId, "Welcome to <b>Beyblade Bot</b>!\n\nUse <code>/guide</code> for a quick tutorial on how to play.\n\nUse <code>/fight</code> to challenge someone, or <code>/matchmake</code> to find a ranked opponent (and <code>/cancel</code> to stop searching).\n\nCustomize your identity with:\n<code>/setbey [Name]</code> (3-16 chars)");
       } else if (text.startsWith('/guide')) {
         const guideText = `📖 <b>Beyblade Bot Guide</b>\n\n` +
           `<b>How to Play:</b>\n` +
           `1️⃣ Use <code>/matchmake</code> to queue for a random battle, or reply to someone's message with <code>/fight</code> to challenge them.\n` +
           `2️⃣ In battle, you and your opponent choose an action secretly.\n` +
           `3️⃣ Once both choose, the round resolves! Reduce your opponent's HP or Spin to 0 to win.\n\n` +
-          `<b>Combat Mechanics:</b>\n` +
-          `⚔️ <b>Attack:</b> High damage, reduces your spin.\n` +
-          `🛡️ <b>Defend:</b> Blocks attacks, builds Special Charge (SP).\n` +
-          `💨 <b>Evade:</b> Dodges attacks, but loses to Defend.\n` +
-          `✨ <b>Special:</b> Unlocks at 100 SP. Massive damage!`;
+          `<b>Combat Mechanics (v2):</b>\n` +
+          `⚔️ <b>Attack:</b> High damage output, moderate spin cost, builds Special.\n` +
+          `🛡️ <b>Defend:</b> Reduces incoming damage, lower spin cost, slower Special charge.\n` +
+          `💨 <b>Evade:</b> Low self-damage, builds Special fast, but vulnerable to Special.\n` +
+          `✨ <b>Special:</b> Unlocks at 100 SP. Devastating but costly — resets your meter!\n\n` +
+          `<b>Key Stats:</b>\n` +
+          `❤️ HP: 100 — Reach 0 = KO!\n` +
+          `🌀 Spin: 100 — Reach 0 = Spin Over!\n` +
+          `⚡ Special: Builds each round, usable at 100.`;
         await sendMessage(chatId, guideText);
       } else if (text.startsWith('/setbey ')) {
         const rawName = text.replace('/setbey ', '');
@@ -57,18 +61,6 @@ export async function POST(req: Request) {
              await supabase.from('users').insert({ telegram_id: fromId, username: fromUsername, bey_name: beyName });
            }
            await sendMessage(chatId, `✅ Your Bey is now named: <b>${beyName}</b>`);
-        }
-      } else if (text.startsWith('/settitle ')) {
-        const rawTitle = text.replace('/settitle ', '');
-        const title = sanitizeIdentityInput(rawTitle, 3, 24);
-        if (!title) {
-           await sendMessage(chatId, "❌ Title must be 3-24 characters long and contain valid text.");
-        } else {
-           const { data } = await supabase.from('users').update({ title: title, username: fromUsername }).eq('telegram_id', fromId).select();
-           if (!data || data.length === 0) {
-             await supabase.from('users').insert({ telegram_id: fromId, username: fromUsername, title: title });
-           }
-           await sendMessage(chatId, `✅ Your Title is now: <b>[${title}]</b>`);
         }
       } else if (text.startsWith('/matchmake')) {
         await joinQueue(chatId, fromId, fromUsername);
